@@ -1,0 +1,150 @@
+version: '3.7'
+
+services:
+
+  kafka-telemetry:
+    image: confluentinc/cp-kafka:latest
+    environment:
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:9093,OUTSIDE://0.0.0.0:9094,CONTROLLER://0.0.0.0:9095
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL: PLAINTEXT
+      KAFKA_LISTENER_NAMES: INSIDE,OUTSIDE
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka-telemetry:9093,OUTSIDE://localhost:9094,CONTROLLER://kafka-telemetry:9095
+      # KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181  
+      KAFKA_BROKER_ID: 1
+      KAFKA_NODE_ID: 1
+      CLUSTER_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-telemetry:9095
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    ports:
+      - "9093:9093"
+      - "9094:9094"
+    networks:
+      - kafka_network_telemetry
+    volumes:
+      - kafka-data-telemetry:/var/lib/kafka-telemetry
+    entrypoint: /etc/confluent/docker/run
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: redpanda-console
+    ports:
+      - "8081:8080"
+    environment:
+      - KAFKA_BROKERS=kafka-telemetry:9093  # replace with your broker container name and port
+    depends_on:
+      - kafka-telemetry
+    networks:
+      - kafka_network_telemetry
+
+
+  vitals-simulator:
+    build:
+      context: ./apps/producer/remote-device
+    container_name: vitals-simulator
+    environment:
+      - KAFKA_BROKER=kafka-telemetry:9093
+      - KAFKA_TOPIC=vitals
+      - NUM_PARTITIONS=10
+      - NUM_DEVICES=4
+    ports:
+      - "8082:8080"
+    depends_on:
+      - kafka-telemetry
+    networks:
+      - kafka_network_telemetry
+    command: ["python", "vitals_simulator.py"]
+
+  # vital-timeseries-consumer:
+  #   build:
+  #     context: ./apps/consumers/vital-timeseries
+  #   container_name: vital-timeseries-consumer
+  #   environment:
+  #     - KAFKA_BROKER=kafka-telemetry:9093
+  #     - INFLUXDB_URL=http://influxdb:8086
+  #     - INFLUXDB_BUCKET=vitals
+  #     - INFLUXDB_ORG=local
+  #     - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+  #     - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+  #     - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+  #   depends_on:
+  #     - kafka-telemetry
+  #     - influxdb
+  #   networks:
+  #     - kafka_network_telemetry
+  #   volumes:
+  #     - ./apps/consumers/vital-timeseries:/app
+
+  # fhir-consumer:
+  #   build:
+  #     context: ./apps/consumers/vital-hl7
+  #     dockerfile: Dockerfile
+  #   container_name: fhir-consumer
+  #   restart: unless-stopped
+  #   environment:
+  #     # Kafka
+  #     KAFKA_BOOTSTRAP_SERVERS: "kafka-telemetry:9093"
+  #     KAFKA_TOPIC: "vitals"
+  #     CONSUMER_GROUP: "vitals-fhir-consumers"
+  #     # MongoDB
+  #     MONGO_URI: "mongodb://admin:s3cr3tPassw0rd@mongo:27017/admin"
+  #     MONGO_DB: "ehr"
+  #     MONGO_COLLECTION: "observations"
+  #   depends_on:
+  #     - kafka-telemetry
+  #   networks:
+  #     - kafka_network_telemetry
+  # influxdb:
+  #   image: influxdb:latest
+  #   environment:
+  #     - DOCKER_INFLUXDB_INIT_MODE=setup
+  #     - DOCKER_INFLUXDB_INIT_USERNAME=admin
+  #     - DOCKER_INFLUXDB_INIT_PASSWORD=SuperSecret
+  #     - DOCKER_INFLUXDB_INIT_ORG=local
+  #     - DOCKER_INFLUXDB_INIT_BUCKET=vitals
+  #     - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=MyInitialAdminToken123
+  #   ports:
+  #     - "8086:8086"
+  #   volumes:
+  #     - influxdb-data-telemetry:/var/lib/influxdb2-telemetry
+  #   networks:
+  #     - kafka_network_telemetry
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+  #     interval: 10s
+  #     retries: 5
+  #     start_period: 20s
+  #     timeout: 5s
+
+  # influx-db-setup:
+  #   build:
+  #     context: ./influx-db-setup
+  #   container_name: influx-db-setup
+  #   depends_on:
+  #     - influxdb
+
+
+  # grafana:
+  #   image: grafana/grafana-oss:12.0.0 # or :latest
+  #   container_name: grafana
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     GF_SECURITY_ADMIN_USER: admin
+  #     GF_SECURITY_ADMIN_PASSWORD: admin123
+  #     # GF_INSTALL_PLUGINS:         grafana-influxdb-flux-datasource
+  #   depends_on: [ influxdb ]
+  #   networks: [ kafka_network_telemetry ]
+
+networks:
+  kafka_network_telemetry:
+    driver: bridge
+
+volumes:
+  kafka-data-telemetry:
+  influxdb-telemetry-data:
